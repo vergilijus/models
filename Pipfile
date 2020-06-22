@@ -1,0 +1,20 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+
+[packages]
+pycocotools = {editable = true,git = "https://github.com/cocodataset/cocoapi.git",subdirectory = "PythonAPI"}
+cython = "*"
+contextlib2 = "*"
+pillow = "*"
+lxml = "*"
+jupyter = "*"
+matplotlib = "*"
+tf-slim = "*"
+tensorflow-gpu = "==1.15.2"
+
+[requires]
+python_version = "3.7"
