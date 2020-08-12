@@ -4,7 +4,7 @@
 # Usage:
 # run_train.sh <config_path> <model_dir> <num_train_steps>
 
-API_PATH=/home/ruslan/projects/models-fork/research
+API_PATH=/home/ruslan/projects/models/research
 
 PIPELINE_CONFIG_PATH=$1
 MODEL_DIR=$2
