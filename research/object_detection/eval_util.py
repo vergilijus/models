@@ -552,7 +552,35 @@ def _resize_detection_masks(args):
   detection_boxes, detection_masks, image_shape = args
   detection_masks_reframed = ops.reframe_box_masks_to_image_masks(
       detection_masks, detection_boxes, image_shape[0], image_shape[1])
-  return tf.cast(tf.greater(detection_masks_reframed, 0.5), tf.uint8)
+  # If the masks are currently float, binarize them. Otherwise keep them as
+  # integers, since they have already been thresholded.
+  if detection_masks_reframed.dtype == tf.float32:
+    detection_masks_reframed = tf.greater(detection_masks_reframed, 0.5)
+  return tf.cast(detection_masks_reframed, tf.uint8)
+
+
+def resize_detection_masks(detection_boxes, detection_masks,
+                           original_image_spatial_shapes):
+  """Resizes per-box detection masks to be relative to the entire image.
+
+  Note that this function only works when the spatial size of all images in
+  the batch is the same. If not, this function should be used with batch_size=1.
+
+  Args:
+    detection_boxes: A [batch_size, num_instances, 4] float tensor containing
+      bounding boxes.
+    detection_masks: A [batch_suze, num_instances, height, width] float tensor
+      containing binary instance masks per box.
+    original_image_spatial_shapes: a [batch_size, 3] shaped int tensor
+      holding the spatial dimensions of each image in the batch.
+  Returns:
+    masks: Masks resized to the spatial extents given by
+      (original_image_spatial_shapes[0, 0], original_image_spatial_shapes[0, 1])
+  """
+  return shape_utils.static_or_dynamic_map_fn(
+      _resize_detection_masks,
+      elems=[detection_boxes, detection_masks, original_image_spatial_shapes],
+      dtype=tf.uint8)
 
 
 def _resize_groundtruth_masks(args):
@@ -568,6 +596,17 @@ def _resize_groundtruth_masks(args):
       method=tf.image.ResizeMethod.NEAREST_NEIGHBOR,
       align_corners=True)
   return tf.cast(tf.squeeze(mask, 3), tf.uint8)
+
+
+def _resize_surface_coordinate_masks(args):
+  detection_boxes, surface_coords, image_shape = args
+  surface_coords_v, surface_coords_u = tf.unstack(surface_coords, axis=-1)
+  surface_coords_v_reframed = ops.reframe_box_masks_to_image_masks(
+      surface_coords_v, detection_boxes, image_shape[0], image_shape[1])
+  surface_coords_u_reframed = ops.reframe_box_masks_to_image_masks(
+      surface_coords_u, detection_boxes, image_shape[0], image_shape[1])
+  return tf.stack([surface_coords_v_reframed, surface_coords_u_reframed],
+                  axis=-1)
 
 
 def _scale_keypoint_to_absolute(args):
@@ -720,6 +759,12 @@ def result_dict_for_batched_example(images,
         num_keypoints] bool tensor with keypoint visibilities (Optional).
       'groundtruth_labeled_classes': [batch_size, num_classes] int64
         tensor of 1-indexed classes. (Optional)
+      'groundtruth_dp_num_points': [batch_size, max_number_of_boxes] int32
+        tensor. (Optional)
+      'groundtruth_dp_part_ids': [batch_size, max_number_of_boxes,
+        max_sampled_points] int32 tensor. (Optional)
+      'groundtruth_dp_surface_coords_list': [batch_size, max_number_of_boxes,
+        max_sampled_points, 4] float32 tensor. (Optional)
     class_agnostic: Boolean indicating whether the detections are class-agnostic
       (i.e. binary). Default False.
     scale_to_absolute: Boolean indicating whether boxes and keypoints should be
@@ -747,12 +792,16 @@ def result_dict_for_batched_example(images,
     'detection_scores': [batch_size, max_detections] float32 tensor of scores.
     'detection_classes': [batch_size, max_detections] int64 tensor of 1-indexed
       classes.
-    'detection_masks': [batch_size, max_detections, H, W] float32 tensor of
-      binarized masks, reframed to full image masks. (Optional)
+    'detection_masks': [batch_size, max_detections, H, W] uint8 tensor of
+      instance masks, reframed to full image masks. Note that these may be
+      binarized (e.g. {0, 1}), or may contain 1-indexed part labels. (Optional)
     'detection_keypoints': [batch_size, max_detections, num_keypoints, 2]
       float32 tensor containing keypoint coordinates. (Optional)
     'detection_keypoint_scores': [batch_size, max_detections, num_keypoints]
       float32 tensor containing keypoint scores. (Optional)
+    'detection_surface_coords': [batch_size, max_detection, H, W, 2] float32
+      tensor with normalized surface coordinates (e.g. DensePose UV
+      coordinates). (Optional)
     'num_detections': [batch_size] int64 tensor containing number of valid
       detections.
     'groundtruth_boxes': [batch_size, num_boxes, 4] float32 tensor of boxes, in
@@ -844,14 +893,18 @@ def result_dict_for_batched_example(images,
 
   if detection_fields.detection_masks in detections:
     detection_masks = detections[detection_fields.detection_masks]
-    # TODO(rathodv): This should be done in model's postprocess
-    # function ideally.
-    output_dict[detection_fields.detection_masks] = (
-        shape_utils.static_or_dynamic_map_fn(
-            _resize_detection_masks,
-            elems=[detection_boxes, detection_masks,
-                   original_image_spatial_shapes],
-            dtype=tf.uint8))
+    output_dict[detection_fields.detection_masks] = resize_detection_masks(
+        detection_boxes, detection_masks, original_image_spatial_shapes)
+
+    if detection_fields.detection_surface_coords in detections:
+      detection_surface_coords = detections[
+          detection_fields.detection_surface_coords]
+      output_dict[detection_fields.detection_surface_coords] = (
+          shape_utils.static_or_dynamic_map_fn(
+              _resize_surface_coordinate_masks,
+              elems=[detection_boxes, detection_surface_coords,
+                     original_image_spatial_shapes],
+              dtype=tf.float32))
 
   if detection_fields.detection_keypoints in detections:
     detection_keypoints = detections[detection_fields.detection_keypoints]
@@ -1068,9 +1121,23 @@ def evaluator_options_from_eval_config(eval_config):
           'include_metrics_per_category': (
               eval_config.include_metrics_per_category)
       }
+      # For coco detection eval, if the eval_config proto contains the
+      # "skip_predictions_for_unlabeled_class" field, include this field in
+      # evaluator_options.
+      if eval_metric_fn_key == 'coco_detection_metrics' and hasattr(
+          eval_config, 'skip_predictions_for_unlabeled_class'):
+        evaluator_options[eval_metric_fn_key].update({
+            'skip_predictions_for_unlabeled_class':
+                (eval_config.skip_predictions_for_unlabeled_class)
+        })
     elif eval_metric_fn_key == 'precision_at_recall_detection_metrics':
       evaluator_options[eval_metric_fn_key] = {
           'recall_lower_bound': (eval_config.recall_lower_bound),
           'recall_upper_bound': (eval_config.recall_upper_bound)
       }
   return evaluator_options
+
+
+def has_densepose(eval_dict):
+  return (fields.DetectionResultFields.detection_masks in eval_dict and
+          fields.DetectionResultFields.detection_surface_coords in eval_dict)

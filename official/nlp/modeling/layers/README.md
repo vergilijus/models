@@ -3,11 +3,6 @@
 Layers are the fundamental building blocks for NLP models. They can be used to
 assemble new layers, networks, or models.
 
-*   [DenseEinsum](dense_einsum.py) implements a feedforward network using
-    tf.einsum. This layer contains the einsum op, the associated weight, and the
-    logic required to generate the einsum expression for the given
-    initialization parameters.
-
 *   [MultiHeadAttention](attention.py) implements an optionally masked attention
     between query, key, value tensors as described in
     ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762). If
@@ -15,6 +10,12 @@ assemble new layers, networks, or models.
 
 *   [CachedAttention](attention.py) implements an attention layer with cache
     used for auto-agressive decoding.
+
+*   [MatMulWithMargin](mat_mul_with_margin.py) implements a matrix
+    multiplication with margin layer used for training retrieval / ranking
+    tasks, as described in ["Improving Multilingual Sentence Embedding using
+    Bi-directional Dual Encoder with Additive Margin
+    Softmax"](https://www.ijcai.org/Proceedings/2019/0746.pdf).
 
 *   [MultiChannelAttention](multi_channel_attention.py) implements an variant of
     multi-head attention which can be used to merge multiple streams for
@@ -27,6 +28,10 @@ assemble new layers, networks, or models.
 *   [Transformer](transformer.py) implements an optionally masked transformer as
     described in
     ["Attention Is All You Need"](https://arxiv.org/abs/1706.03762).
+
+*   [TransformerDecoderLayer](transformer.py) TransformerDecoderLayer is made up
+    of self multi-head attention, cross multi-head attention and feedforward
+    network.
 
 *   [ReZeroTransformer](rezero_transformer.py) implements Transformer with
     ReZero described in
@@ -49,8 +54,8 @@ assemble new layers, networks, or models.
     should be masked), the output will have masked positions set to
     approximately zero.
 
-* [`MaskedLM`](masked_lm.py) implements a masked language model. It assumes the
-  embedding table variable is passed to it.
+*   [`MaskedLM`](masked_lm.py) implements a masked language model. It assumes
+    the embedding table variable is passed to it.
 
 *   [ClassificationHead](cls_head.py) A pooling head over a sequence of
     embeddings, commonly used by classification tasks.

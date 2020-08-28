@@ -1,3 +1,4 @@
+# Lint as: python3
 # Copyright 2019 The TensorFlow Authors All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -131,7 +132,7 @@ def main(argv):
       delf_dataset = tf.data.Dataset.from_tensor_slices((features_placeholder))
       delf_dataset = delf_dataset.shuffle(1000).batch(
           features_for_clustering.shape[0])
-      iterator = delf_dataset.make_initializable_iterator()
+      iterator = tf.compat.v1.data.make_initializable_iterator(delf_dataset)
 
       def _initializer_fn(sess):
         """Initialize dataset iterator, feed in the data."""

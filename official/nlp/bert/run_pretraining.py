@@ -17,6 +17,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+# Import libraries
 from absl import app
 from absl import flags
 from absl import logging
@@ -105,7 +106,10 @@ def run_customized_training(strategy,
                             train_batch_size,
                             use_next_sentence_label=True,
                             train_summary_interval=0,
-                            custom_callbacks=None):
+                            custom_callbacks=None,
+                            explicit_allreduce=False,
+                            pre_allreduce_callbacks=None,
+                            post_allreduce_callbacks=None):
   """Run BERT pretrain model training using low-level API."""
 
   train_input_fn = get_pretrain_dataset_fn(input_files, max_seq_length,
@@ -139,6 +143,9 @@ def run_customized_training(strategy,
       steps_per_loop=steps_per_loop,
       epochs=epochs,
       sub_model_export_name='pretrained/bert_model',
+      explicit_allreduce=explicit_allreduce,
+      pre_allreduce_callbacks=pre_allreduce_callbacks,
+      post_allreduce_callbacks=post_allreduce_callbacks,
       train_summary_interval=train_summary_interval,
       custom_callbacks=custom_callbacks)
 
@@ -158,6 +165,10 @@ def run_bert_pretrain(strategy, custom_callbacks=None):
 
   performance.set_mixed_precision_policy(common_flags.dtype())
 
+  # If explicit_allreduce = True, apply_gradients() no longer implicitly
+  # allreduce gradients, users manually allreduce gradient and pass the
+  # allreduced grads_and_vars to apply_gradients(). clip_by_global_norm is kept
+  # before allreduce, to be consistent with original TF1 model.
   return run_customized_training(
       strategy,
       bert_config,
@@ -176,16 +187,25 @@ def run_bert_pretrain(strategy, custom_callbacks=None):
       FLAGS.train_batch_size,
       FLAGS.use_next_sentence_label,
       FLAGS.train_summary_interval,
-      custom_callbacks=custom_callbacks)
+      custom_callbacks=custom_callbacks,
+      explicit_allreduce=FLAGS.explicit_allreduce,
+      pre_allreduce_callbacks=[
+          model_training_utils.clip_by_global_norm_callback
+      ])
 
 
 def main(_):
   gin.parse_config_files_and_bindings(FLAGS.gin_file, FLAGS.gin_param)
   if not FLAGS.model_dir:
     FLAGS.model_dir = '/tmp/bert20/'
+  # Configures cluster spec for multi-worker distribution strategy.
+  if FLAGS.num_gpus > 0:
+    _ = distribution_utils.configure_cluster(FLAGS.worker_hosts,
+                                             FLAGS.task_index)
   strategy = distribution_utils.get_distribution_strategy(
       distribution_strategy=FLAGS.distribution_strategy,
       num_gpus=FLAGS.num_gpus,
+      all_reduce_alg=FLAGS.all_reduce_alg,
       tpu_address=FLAGS.tpu)
   if strategy:
     print('***** Number of cores used : ', strategy.num_replicas_in_sync)

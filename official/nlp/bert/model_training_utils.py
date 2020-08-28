@@ -75,6 +75,13 @@ def _float_metric_value(metric):
   return metric.result().numpy().astype(float)
 
 
+def clip_by_global_norm_callback(grads_and_vars):
+  """Performs gradient clipping."""
+  grads, variables = zip(*grads_and_vars)
+  (clipped_grads, _) = tf.clip_by_global_norm(grads, clip_norm=1.0)
+  return zip(clipped_grads, variables)
+
+
 def steps_to_run(current_step, steps_per_epoch, steps_per_loop):
   """Calculates steps to run on device."""
   if steps_per_loop <= 0:
@@ -99,7 +106,9 @@ def write_txt_summary(training_summary, summary_dir):
 
 
 @deprecation.deprecated(
-    None, 'This function is deprecated. Please use Keras compile/fit instead.')
+    None, 'This function is deprecated and we do not expect adding new '
+    'functionalities. Please do not have your code depending '
+    'on this library.')
 def run_customized_training_loop(
     # pylint: disable=invalid-name
     _sentinel=None,
@@ -162,8 +171,8 @@ def run_customized_training_loop(
       custom_callbacks: A list of Keras Callbacks objects to run during
         training. More specifically, `on_train_begin(), on_train_end(),
         on_batch_begin()`, `on_batch_end()`, `on_epoch_begin()`,
-        `on_epoch_end()` methods are invoked during training.
-        Note that some metrics may be missing from `logs`.
+        `on_epoch_end()` methods are invoked during training. Note that some
+        metrics may be missing from `logs`.
       run_eagerly: Whether to run model training in pure eager execution. This
         should be disable for TPUStrategy.
       sub_model_export_name: If not None, will export `sub_model` returned by
@@ -456,8 +465,7 @@ def run_customized_training_loop(
     callback_list.on_train_begin()
     while current_step < total_training_steps and not model.stop_training:
       if current_step % steps_per_epoch == 0:
-        callback_list.on_epoch_begin(
-            int(current_step / steps_per_epoch) + 1)
+        callback_list.on_epoch_begin(int(current_step / steps_per_epoch) + 1)
 
       # Training loss/metric are taking average over steps inside micro
       # training loop. We reset the their values before each round.
@@ -522,13 +530,14 @@ def run_customized_training_loop(
           _save_checkpoint(strategy, checkpoint, model_dir,
                            checkpoint_name.format(step=current_step))
           if eval_input_fn:
-            logging.info('Running evaluation after step: %s.', current_step)
-            logs = _run_evaluation(current_step,
-                                   _get_input_iterator(eval_input_fn, strategy))
             # Re-initialize evaluation metric.
             eval_loss_metric.reset_states()
             for metric in eval_metrics + model.metrics:
               metric.reset_states()
+
+            logging.info('Running evaluation after step: %s.', current_step)
+            logs = _run_evaluation(current_step,
+                                   _get_input_iterator(eval_input_fn, strategy))
         # We add train_loss here rather than call on_batch_end twice to make
         # sure that no duplicated values are generated.
         logs['loss'] = train_loss
@@ -546,6 +555,11 @@ def run_customized_training_loop(
     _save_checkpoint(strategy, checkpoint, model_dir,
                      checkpoint_name.format(step=current_step))
     if eval_input_fn:
+      # Re-initialize evaluation metric.
+      eval_loss_metric.reset_states()
+      for metric in eval_metrics + model.metrics:
+        metric.reset_states()
+
       logging.info('Running final evaluation after training is complete.')
       logs = _run_evaluation(current_step,
                              _get_input_iterator(eval_input_fn, strategy))
@@ -557,7 +571,6 @@ def run_customized_training_loop(
     for metric in model.metrics:
       training_summary[metric.name] = _float_metric_value(metric)
     if eval_metrics:
-      # TODO(hongkuny): Cleans up summary reporting in text.
       training_summary['last_train_metrics'] = _float_metric_value(
           train_metrics[0])
       training_summary['eval_metrics'] = _float_metric_value(eval_metrics[0])

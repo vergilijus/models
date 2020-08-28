@@ -16,10 +16,11 @@
 """Optimizer factory class."""
 from typing import Union
 
-import tensorflow as tf
 
+import tensorflow as tf
 import tensorflow_addons.optimizers as tfa_optimizers
 
+from official.modeling.optimization import ema_optimizer
 from official.modeling.optimization import lr_schedule
 from official.modeling.optimization.configs import optimization_config as opt_cfg
 from official.nlp import optimization as nlp_optimization
@@ -36,7 +37,8 @@ LR_CLS = {
     'stepwise': tf.keras.optimizers.schedules.PiecewiseConstantDecay,
     'polynomial': tf.keras.optimizers.schedules.PolynomialDecay,
     'exponential': tf.keras.optimizers.schedules.ExponentialDecay,
-    'cosine': tf.keras.experimental.CosineDecay
+    'cosine': tf.keras.experimental.CosineDecay,
+    'power': lr_schedule.DirectPowerDecay,
 }
 
 WARMUP_CLS = {
@@ -60,7 +62,7 @@ class OptimizerFactory(object):
   params = {
         'optimizer': {
             'type': 'sgd',
-            'sgd': {'learning_rate': 0.1, 'momentum': 0.9}
+            'sgd': {'momentum': 0.9}
         },
         'learning_rate': {
             'type': 'stepwise',
@@ -88,11 +90,17 @@ class OptimizerFactory(object):
     self._optimizer_config = config.optimizer.get()
     self._optimizer_type = config.optimizer.type
 
+    self._use_ema = config.ema is not None
+    self._ema_config = config.ema
+
     if self._optimizer_config is None:
       raise ValueError('Optimizer type must be specified')
 
     self._lr_config = config.learning_rate.get()
     self._lr_type = config.learning_rate.type
+
+    if self._lr_type is None:
+      raise ValueError('Learning rate type must be specified')
 
     self._warmup_config = config.warmup.get()
     self._warmup_type = config.warmup.type
@@ -101,18 +109,15 @@ class OptimizerFactory(object):
     """Build learning rate.
 
     Builds learning rate from config. Learning rate schedule is built according
-    to the learning rate config. If there is no learning rate config, optimizer
-    learning rate is returned.
+    to the learning rate config. If learning rate type is consant,
+    lr_config.learning_rate is returned.
 
     Returns:
-      tf.keras.optimizers.schedules.LearningRateSchedule instance. If no
-      learning rate schedule defined, optimizer_config.learning_rate is
-      returned.
+      tf.keras.optimizers.schedules.LearningRateSchedule instance. If
+      learning rate type is consant, lr_config.learning_rate is returned.
     """
-
-    # TODO(arashwan): Explore if we want to only allow explicit const lr sched.
-    if not self._lr_config:
-      lr = self._optimizer_config.learning_rate
+    if self._lr_type == 'constant':
+      lr = self._lr_config.learning_rate
     else:
       lr = LR_CLS[self._lr_type](**self._lr_config.as_dict())
 
@@ -131,8 +136,9 @@ class OptimizerFactory(object):
     rate built using self.build_lr() is passed as an argument to this method.
 
     Args:
-      lr: A floating point value, or
-          a tf.keras.optimizers.schedules.LearningRateSchedule instance.
+      lr: A floating point value, or a
+        tf.keras.optimizers.schedules.LearningRateSchedule instance.
+
     Returns:
       tf.keras.optimizers.Optimizer instance.
     """
@@ -141,5 +147,9 @@ class OptimizerFactory(object):
     optimizer_dict['learning_rate'] = lr
 
     optimizer = OPTIMIZERS_CLS[self._optimizer_type](**optimizer_dict)
-    return optimizer
 
+    if self._use_ema:
+      optimizer = ema_optimizer.ExponentialMovingAverage(
+          optimizer, **self._ema_config.as_dict())
+
+    return optimizer

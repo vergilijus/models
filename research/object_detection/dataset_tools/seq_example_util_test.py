@@ -104,12 +104,12 @@ class SeqExampleUtilTest(tf.test.TestCase):
         source_ids)
 
   def test_make_labeled_example(self):
-    num_frames = 2
+    num_frames = 3
     image_height = 100
     image_width = 200
     dataset_name = b'unlabeled_dataset'
     video_id = b'video_000'
-    labels = [b'dog', b'cat']
+    labels = [b'dog', b'cat', b'wolf']
     images = tf.cast(tf.random.uniform(
         [num_frames, image_height, image_width, 3],
         maxval=256,
@@ -117,15 +117,17 @@ class SeqExampleUtilTest(tf.test.TestCase):
     images_list = tf.unstack(images, axis=0)
     encoded_images_list = [tf.io.encode_jpeg(image) for image in images_list]
     encoded_images = self.materialize_tensors(encoded_images_list)
-    timestamps = [100000, 110000]
-    is_annotated = [1, 0]
+    timestamps = [100000, 110000, 120000]
+    is_annotated = [1, 0, 1]
     bboxes = [
         np.array([[0., 0., 0., 0.],
                   [0., 0., 1., 1.]], dtype=np.float32),
-        np.zeros([0, 4], dtype=np.float32)
+        np.zeros([0, 4], dtype=np.float32),
+        np.array([], dtype=np.float32)
     ]
     label_strings = [
         np.array(labels),
+        np.array([]),
         np.array([])
     ]
 
@@ -288,7 +290,7 @@ class SeqExampleUtilTest(tf.test.TestCase):
         [0.75, 1.],
         seq_feature_dict['region/bbox/xmax'].feature[0].float_list.value[:])
     self.assertAllEqual(
-        ['cat', 'frog'],
+        [b'cat', b'frog'],
         seq_feature_dict['region/label/string'].feature[0].bytes_list.value[:])
     self.assertAllClose(
         [0.],
@@ -332,7 +334,7 @@ class SeqExampleUtilTest(tf.test.TestCase):
         [0.75],
         seq_feature_dict['region/bbox/xmax'].feature[1].float_list.value[:])
     self.assertAllEqual(
-        ['cat'],
+        [b'cat'],
         seq_feature_dict['region/label/string'].feature[1].bytes_list.value[:])
     self.assertAllClose(
         [],

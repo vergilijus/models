@@ -73,9 +73,15 @@ def define_common_bert_flags():
       'If specified, init_checkpoint flag should not be used.')
   flags.DEFINE_bool('hub_module_trainable', True,
                     'True to make keras layers in the hub module trainable.')
-  flags.DEFINE_string('sub_model_export_name', None,
-                      'If set, `sub_model` checkpoints are exported into '
-                      'FLAGS.model_dir/FLAGS.sub_model_export_name.')
+  flags.DEFINE_string(
+      'sub_model_export_name', None,
+      'If set, `sub_model` checkpoints are exported into '
+      'FLAGS.model_dir/FLAGS.sub_model_export_name.')
+  flags.DEFINE_bool('explicit_allreduce', False,
+                    'True to use explicit allreduce instead of the implicit '
+                    'allreduce in optimizer.apply_gradients(). If fp16 mixed '
+                    'precision training is used, this also enables allreduce '
+                    'gradients in fp16.')
 
   flags_core.define_log_steps()
 

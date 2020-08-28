@@ -36,11 +36,13 @@ def decode_record(record, name_to_features):
   return example
 
 
-def single_file_dataset(input_file, name_to_features):
+def single_file_dataset(input_file, name_to_features, num_samples=None):
   """Creates a single-file dataset to be passed for BERT custom training."""
   # For training, we want a lot of parallel reading and shuffling.
   # For eval, we want no shuffling and parallel reading doesn't matter.
   d = tf.data.TFRecordDataset(input_file)
+  if num_samples:
+    d = d.take(num_samples)
   d = d.map(
       lambda record: decode_record(record, name_to_features),
       num_parallel_calls=tf.data.experimental.AUTOTUNE)
@@ -156,7 +158,8 @@ def create_classifier_dataset(file_path,
                               is_training=True,
                               input_pipeline_context=None,
                               label_type=tf.int64,
-                              include_sample_weights=False):
+                              include_sample_weights=False,
+                              num_samples=None):
   """Creates input dataset from (tf)records files for train/eval."""
   name_to_features = {
       'input_ids': tf.io.FixedLenFeature([seq_length], tf.int64),
@@ -166,7 +169,8 @@ def create_classifier_dataset(file_path,
   }
   if include_sample_weights:
     name_to_features['weight'] = tf.io.FixedLenFeature([], tf.float32)
-  dataset = single_file_dataset(file_path, name_to_features)
+  dataset = single_file_dataset(file_path, name_to_features,
+                                num_samples=num_samples)
 
   # The dataset is always sharded by number of hosts.
   # num_input_pipelines is the number of hosts rather than number of cores.
@@ -245,5 +249,41 @@ def create_squad_dataset(file_path,
       _select_data_from_record,
       num_parallel_calls=tf.data.experimental.AUTOTUNE)
   dataset = dataset.batch(batch_size, drop_remainder=True)
+  dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+  return dataset
+
+
+def create_retrieval_dataset(file_path,
+                             seq_length,
+                             batch_size,
+                             input_pipeline_context=None):
+  """Creates input dataset from (tf)records files for scoring."""
+  name_to_features = {
+      'input_ids': tf.io.FixedLenFeature([seq_length], tf.int64),
+      'input_mask': tf.io.FixedLenFeature([seq_length], tf.int64),
+      'segment_ids': tf.io.FixedLenFeature([seq_length], tf.int64),
+      'example_id': tf.io.FixedLenFeature([1], tf.int64),
+  }
+  dataset = single_file_dataset(file_path, name_to_features)
+
+  # The dataset is always sharded by number of hosts.
+  # num_input_pipelines is the number of hosts rather than number of cores.
+  if input_pipeline_context and input_pipeline_context.num_input_pipelines > 1:
+    dataset = dataset.shard(input_pipeline_context.num_input_pipelines,
+                            input_pipeline_context.input_pipeline_id)
+
+  def _select_data_from_record(record):
+    x = {
+        'input_word_ids': record['input_ids'],
+        'input_mask': record['input_mask'],
+        'input_type_ids': record['segment_ids']
+    }
+    y = record['example_id']
+    return (x, y)
+
+  dataset = dataset.map(
+      _select_data_from_record,
+      num_parallel_calls=tf.data.experimental.AUTOTUNE)
+  dataset = dataset.batch(batch_size, drop_remainder=False)
   dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
   return dataset
