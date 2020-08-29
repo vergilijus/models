@@ -76,6 +76,14 @@ def main(unused_argv):
   flags.mark_flag_as_required('pipeline_config_path')
   tf.config.set_soft_device_placement(True)
 
+  gpus = tf.config.experimental.list_physical_devices('GPU')
+  if gpus:
+    try:
+      for gpu in gpus:
+        tf.config.experimental.set_memory_growth(gpu, True)
+    except RuntimeError as e:
+      print(e)
+
   if FLAGS.checkpoint_dir:
     model_lib_v2.eval_continuously(
         pipeline_config_path=FLAGS.pipeline_config_path,
